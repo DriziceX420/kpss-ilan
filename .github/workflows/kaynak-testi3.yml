@@ -1,0 +1,49 @@
+name: Kaynak testi 3
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ilan.gov.tr arama adresini dene
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          python3 - <<'EOF'
+          import os, json, ssl, urllib.request
+          URL = "https://www.ilan.gov.tr/api/api/services/app/Ad/AdsByFilter"
+          H = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+               "Content-Type": "application/json-patch+json",
+               "Accept": "text/plain",
+               "Origin": "https://www.ilan.gov.tr",
+               "Referer": "https://www.ilan.gov.tr/ilan/tum-ilanlar"}
+          def post(keys):
+            data = json.dumps({"keys": keys, "skipCount": 0, "maxResultCount": 5}).encode()
+            req = urllib.request.Request(URL, data=data, headers=H, method="POST")
+            try:
+              r = urllib.request.urlopen(req, timeout=25)
+            except ssl.SSLError:
+              ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+              r = urllib.request.urlopen(req, timeout=25, context=ctx)
+            return json.loads(r.read().decode("utf-8", "ignore"))
+          out = []
+          for ad, keys in {"bos": {}, "q": {"q": ["personel"]}, "text": {"text": ["personel"]}, "searchText": {"searchText": ["personel"]}}.items():
+            try:
+              j = post(keys)
+              res = j.get("result", j)
+              ilanlar = res.get("ads") or res.get("items") or []
+              out.append("%s: anahtarlar=%s, ilan=%d, toplam=%s" % (ad, ",".join(list(res.keys())[:6]), len(ilanlar), res.get("totalCount", res.get("count", "?"))))
+              for a in ilanlar[:2]:
+                filt = "; ".join("%s=%s" % (f.get("key"), f.get("value")) for f in a.get("adTypeFilters", [])[:4])
+                out.append("  - %s | %s | %s | %s" % (str(a.get("title"))[:50], a.get("advertiserName"), str(a.get("publishStartDate"))[:10], filt))
+            except Exception as e:
+              out.append("%s HATA %s %s" % (ad, type(e).__name__, str(e)[:60]))
+          ozet = "\n".join(out)[:3500]
+          print(ozet)
+          topic = os.environ.get("NTFY_TOPIC", "")
+          if topic:
+            req = urllib.request.Request("https://ntfy.sh/" + topic, data=ozet.encode("utf-8"),
+                                         headers={"Title": "KPSS kaynak testi 3"})
+            urllib.request.urlopen(req, timeout=20)
+          EOF

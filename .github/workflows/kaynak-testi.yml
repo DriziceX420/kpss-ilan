@@ -1,0 +1,42 @@
+name: Kaynak testi
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kaynakları dene ve ntfy ile bildir
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, urllib.request
+          kaynaklar = {
+            "Kamu İlan": "https://kamuilan.sbb.gov.tr/",
+            "ilan.gov.tr": "https://www.ilan.gov.tr/",
+            "İŞKUR": "https://esube.iskur.gov.tr/Istihdam/AcikIsIlanAra.aspx",
+            "Kariyer Kapısı": "https://kariyerkapisi.gov.tr/isealim",
+            "ÖSYM": "https://www.osym.gov.tr/",
+          }
+          satirlar = []
+          for ad, url in kaynaklar.items():
+            try:
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"})
+              with urllib.request.urlopen(req, timeout=25) as r:
+                govde = r.read().decode("utf-8", "ignore")
+                baslik = re.search(r"<title>(.*?)</title>", govde, re.S | re.I)
+                satirlar.append(f"OK {ad}: {r.status}, {len(govde)} karakter, ilan geciyor: {'ilan' in govde.lower()}")
+                print(ad, "->", (baslik.group(1).strip() if baslik else "baslik yok"))
+            except Exception as e:
+              satirlar.append(f"HATA {ad}: {type(e).__name__} {str(e)[:60]}")
+          ozet = "\n".join(satirlar)
+          print(ozet)
+          topic = os.environ.get("NTFY_TOPIC", "")
+          if topic:
+            req = urllib.request.Request("https://ntfy.sh/" + topic, data=ozet.encode("utf-8"),
+                                         headers={"Title": "KPSS kaynak testi"})
+            urllib.request.urlopen(req, timeout=20)
+          else:
+            print("NTFY_TOPIC tanimli degil")
+          EOF

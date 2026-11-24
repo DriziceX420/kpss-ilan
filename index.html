@@ -51,7 +51,7 @@ function sample(){
     {baslik:"Tercih kılavuzu yayımlandı (örnek)",kurum:"ÖSYM",kaynak:"ÖSYM",tarih:d(9),link:"#"}
   ];
 }
-let all=[],src="Tümü";
+let all=[],src="Ortaöğretim";
 const $=id=>document.getElementById(id);
 const isNew=t=>(Date.now()-new Date(t).getTime())<3*day;
 function fmt(t){return new Date(t).toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"})}
@@ -89,6 +89,7 @@ async function init(){
     $("upd").textContent="Son güncelleme: "+new Date(j.guncelleme).toLocaleString("tr-TR");
   }catch(e){all=sample();demo=true;$("upd").textContent="Örnek görünüm"}
   all.sort((a,b)=>b.tarih.localeCompare(a.tarih));
+  if(!all.some(i=>i.kaynak===src))src="Tümü";
   $("note").hidden=!demo;
   chips();render();
 }

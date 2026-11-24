@@ -1,0 +1,58 @@
+name: Kaynak testi 2
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Veri adreslerini ara ve ntfy ile bildir
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, urllib.request
+          from urllib.parse import urljoin
+          H = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+               "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+               "Accept-Language": "tr-TR,tr;q=0.9"}
+          def get(url):
+            req = urllib.request.Request(url, headers=H)
+            with urllib.request.urlopen(req, timeout=25) as r:
+              return r.read().decode("utf-8", "ignore")
+          out = []
+          for ad, url in {"ilan.gov.tr": "https://www.ilan.gov.tr/", "Kariyer Kapisi": "https://kariyerkapisi.gov.tr/isealim"}.items():
+            try:
+              html = get(url)
+              bulunan = set(re.findall(r'["\'](/?api/[A-Za-z0-9_/\-\.]+)["\']', html))
+              for js in re.findall(r'src="([^"]+\.js[^"]*)"', html)[:5]:
+                try:
+                  kod = get(urljoin(url, js))
+                  bulunan |= set(re.findall(r'["\'](/?api/[A-Za-z0-9_/\-\.]+)["\']', kod))
+                  bulunan |= set(re.findall(r'https?://[A-Za-z0-9\.\-]*[a-z]+\.gov\.tr/[A-Za-z0-9_/\-\.]*api[A-Za-z0-9_/\-\.]*', kod))
+                except Exception as e:
+                  pass
+              out.append(ad + " adresler: " + ", ".join(sorted(bulunan)[:15]) if bulunan else ad + ": adres bulunamadi")
+            except Exception as e:
+              out.append(ad + " HATA " + type(e).__name__)
+          try:
+            html = get("https://esube.iskur.gov.tr/Istihdam/AcikIsIlanAra.aspx")
+            satirlar = re.findall(r"<tr.*?</tr>", html, re.S | re.I)
+            temiz = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s)).strip()[:120] for s in satirlar]
+            temiz = [t for t in temiz if t][:4]
+            out.append("ISKUR satir sayisi: %d | ornek: %s" % (len(satirlar), " || ".join(temiz)))
+          except Exception as e:
+            out.append("ISKUR HATA " + type(e).__name__)
+          try:
+            html = get("https://kamuilan.sbb.gov.tr/")
+            out.append("Kamu Ilan: acildi, %d karakter" % len(html))
+          except Exception as e:
+            out.append("Kamu Ilan HATA " + str(e)[:40])
+          ozet = "\n".join(out)[:3000]
+          print(ozet)
+          topic = os.environ.get("NTFY_TOPIC", "")
+          if topic:
+            req = urllib.request.Request("https://ntfy.sh/" + topic, data=ozet.encode("utf-8"),
+                                         headers={"Title": "KPSS kaynak testi 2"})
+            urllib.request.urlopen(req, timeout=20)
+          EOF

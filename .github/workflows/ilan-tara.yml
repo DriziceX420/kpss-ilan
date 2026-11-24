@@ -1,0 +1,102 @@
+name: Ilan tara
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */2 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  tara:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Haberleri tara
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          python3 - <<'EOF'
+          import os, json, urllib.request, urllib.parse, datetime, email.utils
+          import xml.etree.ElementTree as ET
+
+          SORGULAR = ["KPSS lise mezunu personel alımı", "KPSS P94 alım", "kamu personel alımı ilanı",
+                      "İŞKUR sürekli işçi alımı", "sözleşmeli personel alımı ilanı"]
+          H = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
+          topic = os.environ.get("NTFY_TOPIC", "")
+
+          def tl(s):
+            return s.replace("İ", "i").replace("I", "ı").lower()
+
+          def kategori(t):
+            t = tl(t)
+            if any(k in t for k in ["lise", "ortaöğretim", "p94"]): return "Ortaöğretim"
+            if any(k in t for k in ["işçi", "işkur"]): return "İşçi alımı"
+            return "Genel"
+
+          def bildir(baslik, govde, click=None):
+            if not topic: return
+            h = {"Title": baslik}
+            if click and click.isascii(): h["Click"] = click
+            try:
+              req = urllib.request.Request("https://ntfy.sh/" + topic, data=govde.encode("utf-8"), headers=h)
+              urllib.request.urlopen(req, timeout=20)
+            except Exception as e:
+              print("ntfy hata", e)
+
+          mevcut = []
+          ilk = not os.path.exists("ilanlar.json")
+          if not ilk:
+            with open("ilanlar.json", encoding="utf-8") as f:
+              mevcut = json.load(f).get("ilanlar", [])
+          gorulen = {i["link"] for i in mevcut} | {tl(i["baslik"])[:60] for i in mevcut}
+
+          bugun = datetime.date.today()
+          yeni = []
+          for q in SORGULAR:
+            url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=tr&gl=TR&ceid=TR:tr"
+            try:
+              req = urllib.request.Request(url, headers=H)
+              kok = ET.fromstring(urllib.request.urlopen(req, timeout=25).read())
+            except Exception as e:
+              print("sorgu hata", q, e); continue
+            for o in kok.findall(".//item"):
+              baslik = o.findtext("title", "").strip()
+              link = o.findtext("link", "").strip()
+              kurum = o.findtext("source", "Haber").strip()
+              if baslik.endswith(" - " + kurum): baslik = baslik[: -len(kurum) - 3]
+              if not baslik or not link: continue
+              if not any(k in tl(baslik) for k in ["alım", "alınacak", "alacak", "ilan", "başvuru", "kadro"]): continue
+              try:
+                tarih = email.utils.parsedate_to_datetime(o.findtext("pubDate", "")).date()
+              except Exception:
+                continue
+              if (bugun - tarih).days > 45: continue
+              anahtar = tl(baslik)[:60]
+              if link in gorulen or anahtar in gorulen: continue
+              gorulen.add(link); gorulen.add(anahtar)
+              yeni.append({"baslik": baslik, "kurum": kurum, "kaynak": kategori(baslik),
+                           "tarih": tarih.isoformat(), "link": link})
+
+          print("yeni ilan:", len(yeni))
+          if yeni or ilk:
+            tum = sorted(mevcut + yeni, key=lambda i: i["tarih"], reverse=True)
+            tum = [i for i in tum if (bugun - datetime.date.fromisoformat(i["tarih"])).days <= 60][:300]
+            with open("ilanlar.json", "w", encoding="utf-8") as f:
+              json.dump({"guncelleme": datetime.datetime.utcnow().isoformat() + "Z", "ilanlar": tum}, f, ensure_ascii=False, indent=1)
+            if ilk:
+              bildir("KPSS ilan takibi basladi", "%d ilan listeye eklendi. Bundan sonra yeni ilan cikinca bildirim gelecek." % len(tum))
+            else:
+              for i in yeni[:5]:
+                bildir("Yeni KPSS ilani", "%s\n%s - %s" % (i["baslik"], i["kurum"], i["kaynak"]), i["link"])
+              if len(yeni) > 5:
+                bildir("Yeni KPSS ilani", "ve %d yeni ilan daha. Sitede hepsini gorebilirsin." % (len(yeni) - 5))
+          EOF
+
+      - name: Degisiklikleri kaydet
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add ilanlar.json
+          git diff --cached --quiet || (git commit -m "Ilanlar guncellendi" && git push)
